@@ -129,12 +129,18 @@ def validate_data(df):
             # Generate quick guides for each row based on the errors found
             guides = []
             for err in row_errors:
-                if "digit" in err: guides.append("Gunakan Text to Columns Step 3 pilih 'Text'")
-                elif "berisi angka" in err: guides.append("Hapus spasi/strip/tanda baca")
-                elif "tidak boleh kosong" in err: guides.append("Isi data yang kosong")
-                elif "Jenis Kelamin" in err: guides.append("Ganti jadi 'male' atau 'female'")
-                elif "Tanggal Lahir" in err: guides.append("Gunakan format YYYY-MM-DD")
-                elif "Email" in err: guides.append("Perbaiki format email")
+                if "digit" in err: 
+                    guides.append("Gunakan fitur Data > Text to Columns, pada Step 3 pilih format 'Text' agar angka 0 di depan tidak hilang. Contoh: '0076543210")
+                elif "berisi angka" in err: 
+                    guides.append("Hapus semua spasi, tanda strip (-), koma (,), atau titik (.). Kolom ini hanya boleh berisi angka murni. Contoh: 6201010101010002")
+                elif "tidak boleh kosong" in err: 
+                    guides.append("Kolom ini wajib diisi dan tidak boleh dibiarkan kosong. Pastikan semua data lengkap sesuai template.")
+                elif "Jenis Kelamin" in err: 
+                    guides.append("Hanya gunakan kata 'male' (Laki-laki) atau 'female' (Perempuan) dalam huruf kecil. Contoh: male")
+                elif "Tanggal Lahir" in err: 
+                    guides.append("Gunakan format standar Tahun-Bulan-Tanggal (YYYY-MM-DD). Contoh: 2010-05-20")
+                elif "Email" in err: 
+                    guides.append("Pastikan alamat email lengkap dengan simbol '@' dan domain. Contoh: siswa@gmail.com")
             
             validation_results.append({
                 "Baris": row_num,
