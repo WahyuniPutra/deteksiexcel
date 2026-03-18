@@ -20,7 +20,7 @@ EXPECTED_COLUMNS = [
     "EMAIL", "NO TELEPON"
 ]
 
-REQUIRED_COLUMNS = ["NAMA", "NIK", "NISN", "JENIS KELAMIN (male/female)", "TANGGAL LAHIR (YYYY-MM-DD)"]
+REQUIRED_COLUMNS = EXPECTED_COLUMNS.copy()
 
 def validate_data(df):
     errors = []
@@ -35,9 +35,24 @@ def validate_data(df):
     if not missing_cols:
         empty_cols = [col for col in EXPECTED_COLUMNS if df[col].isnull().all()]
         if empty_cols:
-            errors.append(f"⚠️ **Kolom Kosong (Tanpa Data):** {', '.join(empty_cols)}")
+            errors.append(f"❌ **Kolom Kosong (Tanpa Data):** {', '.join(empty_cols)}")
     
-    if any("Kolom Hilang" in err for err in errors): # Stop only if columns are missing
+
+    # 3. Check Column Data Types for leading zero preservation
+    numeric_cols_to_check = ["NIK", "NIS", "NISN", "NO TELEPON"]
+    improperly_formatted_cols = []
+    if not missing_cols:
+        for col in numeric_cols_to_check:
+            # Check if any value in the column is an actual number (int or float) instead of a string
+            # This is the most reliable way to detect if the Excel format wasn't "Text"
+            has_numeric_values = df[col].apply(lambda x: isinstance(x, (int, float)) and not pd.isna(x)).any()
+            if has_numeric_values:
+                improperly_formatted_cols.append(col)
+        
+        if improperly_formatted_cols:
+            errors.append(f"format_text:{', '.join(improperly_formatted_cols)}")
+
+    if errors: # Stop if there are any structural errors
         return errors, pd.DataFrame()
 
     # 2. Data Validation
@@ -47,9 +62,28 @@ def validate_data(df):
         row_num = index + 5  # Adjusted for Excel row numbering (header at row 4, data starts at row 5)
         row_errors = []
         
-        # Helper function to check for illegal characters (quotes, dashes, commas)
-        def has_illegal_chars(val):
-            return any(char in str(val) for char in ["'", '"', "-", ",", " "])
+        # Helper function to clean and validate numeric strings (preserving leading zeros)
+        def validate_numeric(val, field_name, expected_length=None):
+            if pd.isna(val) or str(val).strip() == "":
+                return None
+            
+            # Convert to string and strip
+            s_val = str(val).strip()
+            
+            # Handle cases where pandas reads large numbers as floats (e.g., 1.23e+15 or 123.0)
+            if "." in s_val and s_val.replace(".","",1).isdigit():
+                try:
+                    s_val = str(int(float(s_val)))
+                except:
+                    pass
+            
+            if not s_val.isdigit():
+                return f"{field_name} hanya boleh berisi angka (tanpa spasi, strip, atau tanda baca)"
+            
+            if expected_length and len(s_val) != expected_length:
+                return f"{field_name} harus {expected_length} digit (terdeteksi {len(s_val)} digit)"
+            
+            return None
 
         # Check Required Fields
         for col in REQUIRED_COLUMNS:
@@ -57,41 +91,20 @@ def validate_data(df):
                 row_errors.append(f"Kolom '{col}' tidak boleh kosong")
         
         # Check NIK
-        nik = str(row["NIK"]).strip() if not pd.isna(row["NIK"]) else ""
-        if nik:
-            if has_illegal_chars(nik):
-                row_errors.append("NIK tidak boleh mengandung tanda kutip, strip, koma, atau spasi")
-            else:
-                try:
-                    # Convert to clean string (handle scientific notation if any)
-                    nik_clean = str(int(float(nik)))
-                    if len(nik_clean) != 16:
-                        row_errors.append(f"NIK harus 16 digit (terdeteksi {len(nik_clean)} digit)")
-                except:
-                    row_errors.append("NIK harus berupa angka 16 digit")
+        nik_err = validate_numeric(row["NIK"], "NIK", 16)
+        if nik_err: row_errors.append(nik_err)
 
         # Check NIS
-        nis = str(row["NIS"]).strip() if not pd.isna(row["NIS"]) else ""
-        if nis and has_illegal_chars(nis):
-            row_errors.append("NIS tidak boleh mengandung tanda kutip, strip, koma, atau spasi")
+        nis_err = validate_numeric(row["NIS"], "NIS")
+        if nis_err: row_errors.append(nis_err)
 
         # Check NISN
-        nisn = str(row["NISN"]).strip() if not pd.isna(row["NISN"]) else ""
-        if nisn:
-            if has_illegal_chars(nisn):
-                row_errors.append("NISN tidak boleh mengandung tanda kutip, strip, koma, atau spasi")
-            else:
-                try:
-                    nisn_clean = str(int(float(nisn)))
-                    if len(nisn_clean) != 10:
-                        row_errors.append(f"NISN harus 10 digit (terdeteksi {len(nisn_clean)} digit)")
-                except:
-                    row_errors.append("NISN harus berupa angka 10 digit")
+        nisn_err = validate_numeric(row["NISN"], "NISN", 10)
+        if nisn_err: row_errors.append(nisn_err)
 
         # Check Phone Number
-        phone = str(row["NO TELEPON"]).strip() if not pd.isna(row["NO TELEPON"]) else ""
-        if phone and has_illegal_chars(phone):
-            row_errors.append("No Telepon tidak boleh mengandung tanda kutip, strip, koma, atau spasi")
+        phone_err = validate_numeric(row["NO TELEPON"], "No Telepon")
+        if phone_err: row_errors.append(phone_err)
 
         # Check Gender
         gender = str(row["JENIS KELAMIN (male/female)"]).strip().lower() if not pd.isna(row["JENIS KELAMIN (male/female)"]) else ""
@@ -113,10 +126,21 @@ def validate_data(df):
             row_errors.append("Format Email tidak valid")
 
         if row_errors:
+            # Generate quick guides for each row based on the errors found
+            guides = []
+            for err in row_errors:
+                if "digit" in err: guides.append("Gunakan Text to Columns Step 3 pilih 'Text'")
+                elif "berisi angka" in err: guides.append("Hapus spasi/strip/tanda baca")
+                elif "tidak boleh kosong" in err: guides.append("Isi data yang kosong")
+                elif "Jenis Kelamin" in err: guides.append("Ganti jadi 'male' atau 'female'")
+                elif "Tanggal Lahir" in err: guides.append("Gunakan format YYYY-MM-DD")
+                elif "Email" in err: guides.append("Perbaiki format email")
+            
             validation_results.append({
                 "Baris": row_num,
                 "Nama": row["NAMA"] if not pd.isna(row["NAMA"]) else "N/A",
-                "Masalah": "; ".join(row_errors)
+                "Masalah": "; ".join(row_errors),
+                "Panduan Perbaikan": "; ".join(list(dict.fromkeys(guides))) # deduplicate guides
             })
 
     return errors, pd.DataFrame(validation_results)
@@ -125,8 +149,8 @@ uploaded_file = st.file_uploader("Unggah file Excel (.xlsx)", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # Read the file, skipping the first 3 rows of headers/info
-        df = pd.read_excel(uploaded_file, header=3)
+        # Trick: Read as object to prevent early inference, and clear any previous session state
+        df = pd.read_excel(uploaded_file, header=3, dtype=object)
         
         st.subheader("Preview Data")
         st.dataframe(df.head())
@@ -141,7 +165,12 @@ if uploaded_file:
                     if general_errors:
                         st.error("Ditemukan kesalahan struktur:")
                         for err in general_errors:
-                            st.write(err)
+                            if err.startswith("format_text:"):
+                                cols = err.split(":")[1]
+                                st.error(f"❌ **Format Kolom Salah:** Kolom **{cols}** terdeteksi sebagai Angka, bukan Teks.")
+                                st.info("**Solusi:** Di Excel, pilih kolom tersebut, ubah format sel menjadi **'Text'**. Lalu gunakan fitur **Data > Text to Columns**, klik **Next** sampai **Step 3**, pilih opsi **'Text'** pada *Column data format*, kemudian klik **Finish**. Ini akan memastikan angka 0 di depan tidak hilang.")
+                            else:
+                                st.error(err)
                     
                     if not row_errors_df.empty:
                         st.warning(f"Ditemukan {len(row_errors_df)} baris dengan masalah format:")
@@ -173,31 +202,11 @@ with st.sidebar:
     
     st.write("---")
     st.write("**Ketentuan Khusus:**")
-    st.write("- **NIK:** 16 digit angka (tanpa tanda baca)")
-    st.write("- **NISN:** 10 digit angka (tanpa tanda baca)")
-    st.write("- **No Telepon:** Angka saja (tanpa strip/spasi)")
+    st.write("- **NIK:** 16 digit angka")
+    st.write("- **NISN:** 10 digit angka")
     st.write("- **Jenis Kelamin:** male / female")
     st.write("- **Tanggal Lahir:** YYYY-MM-DD")
-
-    st.write("---")
-    st.header("💡 Panduan Perbaikan")
-    with st.expander("Cara Memperbaiki Data"):
-        st.markdown("""
-        1. **NIK/NISN Hilang Angka Nol:** 
-           - Ubah format sel di Excel menjadi **'Text'** sebelum mengetik angka.
-           - Pastikan NIK 16 digit dan NISN 10 digit.
-        2. **Format Tanggal Salah:**
-           - Gunakan format **YYYY-MM-DD** (Contoh: 2010-05-20).
-           - Jika otomatis berubah di Excel, ubah format sel menjadi **'Text'**.
-        3. **Karakter Ilegal (Kutip, Strip, Koma, Spasi):**
-           - Kolom NIK, NIS, NISN, dan No Telepon **hanya boleh berisi angka**.
-           - Hapus semua tanda baca atau spasi di dalam kolom tersebut.
-        4. **Jenis Kelamin:**
-            - Hanya boleh diisi **male** atau **female** (huruf kecil).
-         5. **Kolom Hilang atau Kosong:**
-            - Jangan mengubah nama header di baris ke-4 template asli.
-            - Pastikan kolom tidak dibiarkan kosong seluruhnya jika data tersebut tersedia.
-        """)
+    st.write("- **Email:** Format email standar")
 
     st.write("---")
     st.info("Made With Love By Jitara ID")
