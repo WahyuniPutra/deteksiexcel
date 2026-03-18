@@ -3,6 +3,74 @@ import pandas as pd
 import re
 import io
 from datetime import datetime
+from fpdf import FPDF
+
+# Custom PDF class for report generation
+class PDFReport(FPDF):
+    def header(self):
+        self.set_font("helvetica", "B", 16)
+        self.cell(0, 10, "Laporan Kesalahan Data Siswa", 0, 1, "C")
+        self.ln(5)
+        self.set_font("helvetica", "I", 10)
+        self.cell(0, 10, f"Tanggal Laporan: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 0, 1, "R")
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("helvetica", "I", 8)
+        self.cell(0, 10, f"Halaman {self.page_no()}/{{nb}} - Made With Love By Jitara ID", 0, 0, "C")
+
+def create_pdf(df):
+    pdf = PDFReport()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.alias_nb_pages()
+    
+    # Define column widths
+    col_widths = [15, 45, 60, 70] # Baris, Nama, Masalah, Panduan
+    
+    # Table Header
+    pdf.set_font("helvetica", "B", 10)
+    pdf.set_fill_color(200, 220, 255)
+    headers = ["Baris", "Nama", "Masalah", "Panduan Perbaikan"]
+    for i, header in enumerate(headers):
+        pdf.cell(col_widths[i], 10, header, 1, 0, "C", fill=True)
+    pdf.ln()
+    
+    # Table Content
+    pdf.set_font("helvetica", "", 8)
+    for _, row in df.iterrows():
+        # Get row height based on content
+        lines_masalah = pdf.multi_cell(col_widths[2], 5, str(row['Masalah']), split_only=True)
+        lines_panduan = pdf.multi_cell(col_widths[3], 5, str(row['Panduan Perbaikan']), split_only=True)
+        row_height = max(len(lines_masalah), len(lines_panduan)) * 5
+        if row_height < 10: row_height = 10
+        
+        # Check if row fits on page
+        if pdf.get_y() + row_height > 270:
+            pdf.add_page()
+            # Re-draw header on new page
+            pdf.set_font("helvetica", "B", 10)
+            pdf.set_fill_color(200, 220, 255)
+            for i, header in enumerate(headers):
+                pdf.cell(col_widths[i], 10, header, 1, 0, "C", fill=True)
+            pdf.ln()
+            pdf.set_font("helvetica", "", 8)
+
+        x = pdf.get_x()
+        y = pdf.get_y()
+        
+        pdf.cell(col_widths[0], row_height, str(row['Baris']), 1, 0, "C")
+        pdf.cell(col_widths[1], row_height, str(row['Nama'])[:25], 1, 0, "L")
+        
+        # Multi-cell for wrapped text
+        pdf.multi_cell(col_widths[2], 5, str(row['Masalah']), 1, "L")
+        pdf.set_xy(x + col_widths[0] + col_widths[1] + col_widths[2], y)
+        pdf.multi_cell(col_widths[3], 5, str(row['Panduan Perbaikan']), 1, "L")
+        
+        pdf.ln(0) # Ensure next row starts at the bottom of the current multi-cell block
+        
+    return bytes(pdf.output())
 
 st.set_page_config(page_title="Validator Data Siswa", layout="wide")
 
@@ -129,24 +197,30 @@ def validate_data(df):
             # Generate quick guides for each row based on the errors found
             guides = []
             for err in row_errors:
-                if "digit" in err: 
-                    guides.append("Gunakan fitur Data > Text to Columns, pada Step 3 pilih format 'Text' agar angka 0 di depan tidak hilang. Contoh: '0076543210")
-                elif "berisi angka" in err: 
-                    guides.append("Hapus semua spasi, tanda strip (-), koma (,), atau titik (.). Kolom ini hanya boleh berisi angka murni. Contoh: 6201010101010002")
-                elif "tidak boleh kosong" in err: 
-                    guides.append("Kolom ini wajib diisi dan tidak boleh dibiarkan kosong. Pastikan semua data lengkap sesuai template.")
-                elif "Jenis Kelamin" in err: 
-                    guides.append("Hanya gunakan kata 'male' (Laki-laki) atau 'female' (Perempuan) dalam huruf kecil. Contoh: male")
-                elif "Tanggal Lahir" in err: 
-                    guides.append("Gunakan format standar Tahun-Bulan-Tanggal (YYYY-MM-DD). Contoh: 2010-05-20")
-                elif "Email" in err: 
+                if "NIK" in err and "digit" in err:
+                    guides.append("NIK harus 16 digit. Gunakan fitur Data > Text to Columns (Step 3: Text) agar angka 0 di depan tidak hilang. Contoh: 0123456789012345")
+                elif "NISN" in err and "digit" in err:
+                    guides.append("NISN harus 10 digit. Gunakan fitur Data > Text to Columns (Step 3: Text) agar angka 0 di depan tidak hilang. Contoh: 0012345678")
+                elif "berisi angka" in err:
+                    guides.append("Kolom ini hanya boleh berisi angka murni. Hapus spasi, strip (-), atau tanda baca lainnya. Contoh: 081234567890")
+                elif "tidak boleh kosong" in err:
+                    guides.append("Kolom ini wajib diisi. Pastikan tidak ada sel yang kosong.")
+                elif "Jenis Kelamin" in err:
+                    guides.append("Gunakan 'male' (Laki-laki) atau 'female' (Perempuan) dalam huruf kecil. Contoh: male")
+                elif "Tanggal Lahir" in err:
+                    guides.append("Gunakan format Tahun-Bulan-Tanggal (YYYY-MM-DD). Contoh: 2010-05-20")
+                elif "Email" in err:
                     guides.append("Pastikan alamat email lengkap dengan simbol '@' dan domain. Contoh: siswa@gmail.com")
+            
+            # Format Masalah and Panduan as numbered lists
+            formatted_errors = "\n".join([f"{i+1}. {err}" for i, err in enumerate(row_errors)])
+            formatted_guides = "\n".join([f"{i+1}. {guide}" for i, guide in enumerate(list(dict.fromkeys(guides)))])
             
             validation_results.append({
                 "Baris": row_num,
                 "Nama": row["NAMA"] if not pd.isna(row["NAMA"]) else "N/A",
-                "Masalah": "; ".join(row_errors),
-                "Panduan Perbaikan": "; ".join(list(dict.fromkeys(guides))) # deduplicate guides
+                "Masalah": formatted_errors,
+                "Panduan Perbaikan": formatted_guides
             })
 
     return errors, pd.DataFrame(validation_results)
@@ -183,17 +257,31 @@ if uploaded_file:
                         st.dataframe(row_errors_df, width="stretch")
                         
                         # Option to download errors as XLSX
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        output_xlsx = io.BytesIO()
+                        with pd.ExcelWriter(output_xlsx, engine='openpyxl') as writer:
                             row_errors_df.to_excel(writer, index=False, sheet_name='Kesalahan')
-                        xlsx_data = output.getvalue()
+                        xlsx_data = output_xlsx.getvalue()
 
-                        st.download_button(
-                            label="Unduh Laporan Kesalahan (XLSX)",
-                            data=xlsx_data,
-                            file_name="laporan_kesalahan.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
+                        # Option to download errors as PDF
+                        pdf_data = create_pdf(row_errors_df)
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.download_button(
+                                label="📥 Unduh Laporan Kesalahan (XLSX)",
+                                data=xlsx_data,
+                                file_name=f"laporan_kesalahan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True
+                            )
+                        with col2:
+                            st.download_button(
+                                label="📥 Unduh Laporan Kesalahan (PDF)",
+                                data=pdf_data,
+                                file_name=f"laporan_kesalahan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
     except Exception as e:
         st.error(f"Terjadi kesalahan saat membaca file: {e}")
 else:
